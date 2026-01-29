@@ -20,7 +20,7 @@ export default function Dashboard() {
   const [filtroPagamento, setFiltroPagamento] = useState("");
   const [filtroMarca, setFiltroMarca] = useState("");
 
-  /* ===== LocalStorage ===== */
+  /* ===== LOCALSTORAGE ===== */
   useEffect(() => {
     const dados = JSON.parse(localStorage.getItem("pedidos"));
     if (dados) setPedidos(dados);
@@ -30,7 +30,7 @@ export default function Dashboard() {
     localStorage.setItem("pedidos", JSON.stringify(pedidos));
   }, [pedidos]);
 
-  /* ===== Produtos ===== */
+  /* ===== PRODUTOS ===== */
   function adicionarProduto() {
     setProdutos([...produtos, { nome: "", valor: "", marca: "" }]);
   }
@@ -60,29 +60,14 @@ export default function Dashboard() {
 
   /* ===== VALIDAÇÃO ===== */
   function validarFormulario() {
-    if (!cliente.trim()) {
-      alert("Digite o nome do cliente.");
-      return false;
-    }
-
-    if (!pagamento) {
-      alert("Escolha a forma de pagamento.");
-      return false;
-    }
+    if (!cliente.trim()) return alert("Digite o nome do cliente.");
+    if (!pagamento) return alert("Escolha a forma de pagamento.");
 
     for (let p of produtos) {
-      if (!p.nome.trim()) {
-        alert("Digite o nome de todos os produtos.");
-        return false;
-      }
-      if (!p.valor || Number(p.valor) <= 0) {
-        alert("Digite um valor válido.");
-        return false;
-      }
-      if (!p.marca) {
-        alert("Selecione a marca.");
-        return false;
-      }
+      if (!p.nome.trim()) return alert("Digite o nome do produto.");
+      if (!p.valor || Number(p.valor) <= 0)
+        return alert("Digite um valor válido.");
+      if (!p.marca) return alert("Selecione a marca.");
     }
 
     return true;
@@ -96,8 +81,12 @@ export default function Dashboard() {
     const novoPedido = {
       id: Date.now(),
       cliente,
-      pagamento,
-      produtos,
+      pagamento: pagamento.toLowerCase(),
+      produtos: produtos.map((p) => ({
+        nome: p.nome,
+        valor: p.valor,
+        marca: p.marca.toLowerCase(),
+      })),
       total: calcularTotal(),
     };
 
@@ -107,7 +96,7 @@ export default function Dashboard() {
     setProdutos([{ nome: "", valor: "", marca: "" }]);
   }
 
-  /* ===== IMPORTAR EXCEL / CSV ===== */
+  /* ===== IMPORTAR EXCEL ===== */
   function importarExcel(e) {
     const file = e.target.files[0];
     if (!file) return;
@@ -120,37 +109,67 @@ export default function Dashboard() {
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(sheet);
 
-      const novosPedidos = rows.map((row) => {
-        const produtos = [
-          {
-            nome: row.Produto,
-            valor: row.Valor,
-            marca: row.Marca?.toLowerCase(),
-          },
-        ];
+      const agrupados = {};
 
-        return {
-          id: Date.now() + Math.random(),
-          cliente: row.Cliente,
-          pagamento: row.Pagamento?.toLowerCase(),
-          produtos,
-          total: calcularTotal(produtos, row.Pagamento?.toLowerCase()),
-        };
+      rows.forEach((row) => {
+        const key = `${row.Cliente}-${row.Pagamento}`;
+
+        if (!agrupados[key]) {
+          agrupados[key] = {
+            id: Date.now() + Math.random(),
+            cliente: row.Cliente,
+            pagamento: row.Pagamento?.toLowerCase(),
+            produtos: [],
+          };
+        }
+
+        agrupados[key].produtos.push({
+          nome: row.Produto,
+          marca: row.Marca?.toLowerCase(),
+          valor: row.Valor,
+        });
       });
 
-      setPedidos((prev) => [...novosPedidos, ...prev]);
+      const final = Object.values(agrupados).map((p) => ({
+        ...p,
+        total: calcularTotal(p.produtos, p.pagamento),
+      }));
+
+      setPedidos((prev) => [...final, ...prev]);
     };
 
     reader.readAsArrayBuffer(file);
     e.target.value = "";
   }
 
+  /* ===== EXPORTAR ===== */
+  function exportarExcel() {
+    const linhas = [];
+
+    pedidos.forEach((pedido) => {
+      pedido.produtos.forEach((prod) => {
+        linhas.push({
+          Cliente: pedido.cliente,
+          Pagamento: pedido.pagamento,
+          Produto: prod.nome,
+          Marca: prod.marca,
+          Valor: prod.valor,
+        });
+      });
+    });
+
+    const ws = XLSX.utils.json_to_sheet(linhas);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Pedidos");
+
+    XLSX.writeFile(wb, "pedidos.xlsx");
+  }
+
   /* ===== FILTRO ===== */
   const pedidosFiltrados = pedidos.filter(
     (p) =>
       (!filtroPagamento || p.pagamento === filtroPagamento) &&
-      (!filtroMarca ||
-        p.produtos.some((prod) => prod.marca === filtroMarca))
+      (!filtroMarca || p.produtos.some((x) => x.marca === filtroMarca))
   );
 
   return (
@@ -168,29 +187,27 @@ export default function Dashboard() {
             onChange={(e) => setCliente(e.target.value)}
           />
 
-          {produtos.map((produto, index) => (
-            <div className="row" key={index}>
+          {produtos.map((p, i) => (
+            <div className="row" key={i}>
               <input
                 placeholder="Produto"
-                value={produto.nome}
+                value={p.nome}
                 onChange={(e) =>
-                  atualizarProduto(index, "nome", e.target.value)
+                  atualizarProduto(i, "nome", e.target.value)
                 }
               />
-
               <input
                 type="number"
                 placeholder="Valor"
-                value={produto.valor}
+                value={p.valor}
                 onChange={(e) =>
-                  atualizarProduto(index, "valor", e.target.value)
+                  atualizarProduto(i, "valor", e.target.value)
                 }
               />
-
               <select
-                value={produto.marca}
+                value={p.marca}
                 onChange={(e) =>
-                  atualizarProduto(index, "marca", e.target.value)
+                  atualizarProduto(i, "marca", e.target.value)
                 }
               >
                 <option value="">Marca</option>
@@ -229,6 +246,8 @@ export default function Dashboard() {
           Filtrar
         </button>
 
+        <button onClick={exportarExcel}>Exportar Excel</button>
+
         <label
           style={{
             background: "#334155",
@@ -236,8 +255,6 @@ export default function Dashboard() {
             padding: "12px",
             borderRadius: "12px",
             cursor: "pointer",
-            fontWeight: 600,
-            textAlign: "center",
           }}
         >
           Importar Excel
@@ -245,31 +262,33 @@ export default function Dashboard() {
             type="file"
             accept=".xlsx,.csv"
             onChange={importarExcel}
-            style={{ display: "none" }}
+            hidden
           />
         </label>
       </div>
 
       {/* ===== FILTRO ===== */}
       {mostrarFiltro && (
-        <div className="card">
-          <h2>Filtrar Pedidos</h2>
+        <div className="row" style={{ marginBottom: "20px" }}>
+          <select
+            value={filtroPagamento}
+            onChange={(e) => setFiltroPagamento(e.target.value)}
+          >
+            <option value="">Todos os pagamentos</option>
+            <option value="pix">Pix</option>
+            <option value="debito">Débito</option>
+            <option value="credito">Crédito</option>
+          </select>
 
-          <div className="row">
-            <select onChange={(e) => setFiltroPagamento(e.target.value)}>
-              <option value="">Pagamento</option>
-              <option value="pix">Pix</option>
-              <option value="debito">Débito</option>
-              <option value="credito">Crédito</option>
-            </select>
-
-            <select onChange={(e) => setFiltroMarca(e.target.value)}>
-              <option value="">Marca</option>
-              <option value="boticario">Boticário</option>
-              <option value="natura">Natura</option>
-              <option value="eudora">Eudora</option>
-            </select>
-          </div>
+          <select
+            value={filtroMarca}
+            onChange={(e) => setFiltroMarca(e.target.value)}
+          >
+            <option value="">Todas as marcas</option>
+            <option value="boticario">Boticário</option>
+            <option value="natura">Natura</option>
+            <option value="eudora">Eudora</option>
+          </select>
         </div>
       )}
 
@@ -279,20 +298,27 @@ export default function Dashboard() {
 
         {pedidosFiltrados.length === 0 ? (
           <p className="empty">
-            Não há pedidos com esse pagamento e essa marca.
+            Não há pedidos com esse filtro.
           </p>
         ) : (
           pedidosFiltrados.map((p) => (
             <div key={p.id} className={`pedido ${p.pagamento}`}>
               <div>
                 <strong>{p.cliente}</strong>
-                {p.produtos.map((prod, i) => (
-                  <div key={i} style={{ fontSize: "0.8rem" }}>
-                    {prod.nome} — {prod.marca}
-                  </div>
-                ))}
+
+                <div className="produtos-lista">
+                  {p.produtos.map((prod, i) => (
+                    <div key={i} className="produto-item">
+                      {prod.nome}
+                      <small>{prod.marca}</small>
+                    </div>
+                  ))}
+                </div>
               </div>
-              <span>R$ {p.total}</span>
+
+              <span className="pedido-total">
+                R$ {p.total}
+              </span>
             </div>
           ))
         )}
