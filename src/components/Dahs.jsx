@@ -11,10 +11,12 @@ const TAXAS = {
 export default function Dashboard() {
   const [cliente, setCliente] = useState("");
   const [pagamento, setPagamento] = useState("");
-  const [produtos, setProdutos] = useState([
-    { nome: "", valor: "", marca: "" },
-  ]);
+  const [produtos, setProdutos] = useState([{ nome: "", valor: "", marca: "", pagamento: "" }]);
+
   const [pedidos, setPedidos] = useState([]);
+  const [editandoId, setEditandoId] = useState(null);
+
+  const [valorBaixa, setValorBaixa] = useState({});
 
   const [mostrarFiltro, setMostrarFiltro] = useState(false);
   const [filtroPagamento, setFiltroPagamento] = useState("");
@@ -32,7 +34,7 @@ export default function Dashboard() {
 
   /* ===== PRODUTOS ===== */
   function adicionarProduto() {
-    setProdutos([...produtos, { nome: "", valor: "", marca: "" }]);
+    setProdutos([...produtos, { nome: "", valor: "", marca: "", pagamento: "" }]);
   }
 
   function atualizarProduto(index, campo, valor) {
@@ -47,11 +49,9 @@ export default function Dashboard() {
 
     lista.forEach((p) => {
       let valor = Number(p.valor || 0);
-
-      if (forma === "credito" && TAXAS[p.marca]) {
+      if (p.pagamento === "credito" && TAXAS[p.marca]) {
         valor += valor * (TAXAS[p.marca] / 100);
       }
-
       total += valor;
     });
 
@@ -61,39 +61,82 @@ export default function Dashboard() {
   /* ===== VALIDAÇÃO ===== */
   function validarFormulario() {
     if (!cliente.trim()) return alert("Digite o nome do cliente.");
-    if (!pagamento) return alert("Escolha a forma de pagamento.");
 
     for (let p of produtos) {
       if (!p.nome.trim()) return alert("Digite o nome do produto.");
       if (!p.valor || Number(p.valor) <= 0)
         return alert("Digite um valor válido.");
       if (!p.marca) return alert("Selecione a marca.");
+      if (!p.pagamento) return alert("Selecione a forma de pagamento para o produto.");
     }
 
     return true;
   }
 
-  /* ===== SALVAR ===== */
+  /* ===== SALVAR / EDITAR ===== */
   function salvarPedido(e) {
     e.preventDefault();
     if (!validarFormulario()) return;
 
-    const novoPedido = {
-      id: Date.now(),
+    const pedidoAnterior = pedidos.find((p) => p.id === editandoId);
+
+    const pedido = {
+      id: editandoId || Date.now(),
       cliente,
-      pagamento: pagamento.toLowerCase(),
-      produtos: produtos.map((p) => ({
-        nome: p.nome,
-        valor: p.valor,
-        marca: p.marca.toLowerCase(),
-      })),
-      total: calcularTotal(),
+      pagamento: produtos[0]?.pagamento || "",
+      produtos,
+      total: Number(calcularTotal()),
+      valorPago: pedidoAnterior?.valorPago || 0,
+      pago: pedidoAnterior?.pago || false,
     };
 
-    setPedidos([novoPedido, ...pedidos]);
+    if (editandoId) {
+      setPedidos(pedidos.map((p) => (p.id === editandoId ? pedido : p)));
+      setEditandoId(null);
+    } else {
+      setPedidos([pedido, ...pedidos]);
+    }
+
     setCliente("");
     setPagamento("");
-    setProdutos([{ nome: "", valor: "", marca: "" }]);
+    setProdutos([{ nome: "", valor: "", marca: "", pagamento: "" }]);
+  }
+
+  /* ===== EDITAR ===== */
+  function editarPedido(p) {
+    setCliente(p.cliente);
+    setPagamento(p.pagamento);
+    setProdutos(p.produtos.map(prod => ({ ...prod, pagamento: prod.pagamento || p.pagamento })));
+    setEditandoId(p.id);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  /* ===== REMOVER ===== */
+  function removerPedido(id) {
+    if (!window.confirm("Remover este pedido?")) return;
+    setPedidos(pedidos.filter((p) => p.id !== id));
+  }
+
+  /* ===== APLICAR BAIXA ===== */
+  function aplicarBaixa(id) {
+    const valor = Number(valorBaixa[id]);
+    if (!valor || valor <= 0) return;
+
+    setPedidos((prev) =>
+      prev.map((p) => {
+        if (p.id !== id) return p;
+
+        const novoPago = (p.valorPago || 0) + valor;
+
+        return {
+          ...p,
+          valorPago: novoPago,
+          pago: novoPago >= p.total,
+        };
+      })
+    );
+
+    setValorBaixa({ ...valorBaixa, [id]: "" });
   }
 
   /* ===== IMPORTAR EXCEL ===== */
@@ -120,6 +163,8 @@ export default function Dashboard() {
             cliente: row.Cliente,
             pagamento: row.Pagamento?.toLowerCase(),
             produtos: [],
+            valorPago: 0,
+            pago: false,
           };
         }
 
@@ -127,12 +172,13 @@ export default function Dashboard() {
           nome: row.Produto,
           marca: row.Marca?.toLowerCase(),
           valor: row.Valor,
+          pagamento: row.Pagamento?.toLowerCase(),
         });
       });
 
       const final = Object.values(agrupados).map((p) => ({
         ...p,
-        total: calcularTotal(p.produtos, p.pagamento),
+        total: Number(calcularTotal(p.produtos, p.pagamento)),
       }));
 
       setPedidos((prev) => [...final, ...prev]);
@@ -176,9 +222,9 @@ export default function Dashboard() {
     <div className="dashboard">
       <h1>Dashboard de Pedidos</h1>
 
-      {/* ===== NOVO PEDIDO ===== */}
+      {/* FORM */}
       <div className="card">
-        <h2>Novo Pedido</h2>
+        <h2>{editandoId ? "Editar Pedido" : "Novo Pedido"}</h2>
 
         <form onSubmit={salvarPedido}>
           <input
@@ -215,6 +261,17 @@ export default function Dashboard() {
                 <option value="natura">Natura</option>
                 <option value="eudora">Eudora</option>
               </select>
+              <select
+                value={p.pagamento}
+                onChange={(e) =>
+                  atualizarProduto(i, "pagamento", e.target.value)
+                }
+              >
+                <option value="">Pagamento</option>
+                <option value="pix">Pix</option>
+                <option value="debito">Débito</option>
+                <option value="credito">Crédito</option>
+              </select>
             </div>
           ))}
 
@@ -222,21 +279,13 @@ export default function Dashboard() {
             + Adicionar Produto
           </button>
 
-          <select
-            value={pagamento}
-            onChange={(e) => setPagamento(e.target.value)}
-          >
-            <option value="">Forma de pagamento</option>
-            <option value="pix">Pix</option>
-            <option value="debito">Débito</option>
-            <option value="credito">Crédito</option>
-          </select>
-
           <div className={`total ${pagamento}`}>
             Total: R$ {calcularTotal()}
           </div>
 
-          <button type="submit">Salvar Pedido</button>
+          <button type="submit">
+            {editandoId ? "Atualizar Pedido" : "Salvar Pedido"}
+          </button>
         </form>
       </div>
 
@@ -292,7 +341,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* ===== LISTA ===== */}
+      {/* LISTA */}
       <div className="card">
         <h2>Pedidos</h2>
 
@@ -301,26 +350,57 @@ export default function Dashboard() {
             Não há pedidos com esse filtro.
           </p>
         ) : (
-          pedidosFiltrados.map((p) => (
-            <div key={p.id} className={`pedido ${p.pagamento}`}>
-              <div>
-                <strong>{p.cliente}</strong>
+          pedidosFiltrados.map((p) => {
+            const falta = (p.total - (p.valorPago || 0)).toFixed(2);
 
-                <div className="produtos-lista">
-                  {p.produtos.map((prod, i) => (
-                    <div key={i} className="produto-item">
-                      {prod.nome}
-                      <small>{prod.marca}</small>
-                    </div>
-                  ))}
+            return (
+              <div key={p.id} className={`pedido ${p.pagamento}`}>
+                <div className="pedido-info">
+                  <strong>{p.cliente}</strong>
+
+                  <div className="produtos-lista">
+                    {p.produtos.map((prod, i) => (
+                      <div className="produto-item" key={i}>
+                        {prod.nome}
+                        <small>
+                          R$ {prod.valor} • {prod.marca} • {prod.pagamento}
+                        </small>
+                      </div>
+                    ))}
+                  </div>
+
+                  <p>Total: R$ {p.total.toFixed(2)}</p>
+                  <p>Pago: R$ {(p.valorPago || 0).toFixed(2)}</p>
+                  <p>Falta: R$ {falta}</p>
+
+                  <input
+                    type="number"
+                    placeholder="Valor pago agora"
+                    value={valorBaixa[p.id] || ""}
+                    onChange={(e) =>
+                      setValorBaixa({
+                        ...valorBaixa,
+                        [p.id]: e.target.value,
+                      })
+                    }
+                  />
+
+                  <button onClick={() => aplicarBaixa(p.id)}>
+                    Aplicar baixa
+                  </button>
+
+                  <div>
+                    {p.pago ? "✅ Quitado" : "⏳ Em aberto"}
+                  </div>
+                </div>
+
+                <div>
+                  <button onClick={() => editarPedido(p)}>✏️</button>
+                  <button onClick={() => removerPedido(p.id)}>❌</button>
                 </div>
               </div>
-
-              <span className="pedido-total">
-                R$ {p.total}
-              </span>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
     </div>
